@@ -1,0 +1,118 @@
+# =============================================================================
+# docker-compose.yml
+# -----------------------------------------------------------------------------
+# Spins up the WHOLE system with a single command: `docker compose up`.
+#
+# Services:
+#   postgres   -> primary durable data store (query + count)
+#   redis-0/1/2 -> THREE separate Redis containers. These are the "logical
+#                  cache nodes". The backend spreads cached suggestion results
+#                  across them using CONSISTENT HASHING (see cache/ folder).
+#   backend    -> Node + Express API (suggest / search / trending / cache-debug)
+#   frontend   -> React (Vite) UI
+#
+# Why three Redis containers instead of one with multiple DB indexes?
+#   So the distribution is *real*: each node is a separate process/port, and
+#   the consistent-hashing demo (GET /cache/debug) shows a prefix being routed
+#   to an actual independent node. This is what the assignment asks for.
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ta_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-typeahead}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-typeahead}
+      POSTGRES_DB: ${POSTGRES_DB:-typeahead}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Healthcheck lets the backend wait until Postgres can actually accept
+    # connections (not just until the container starts).
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-typeahead}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # --- The distributed cache layer: three independent Redis nodes ----------
+  redis-0:
+    image: redis:7-alpine
+    container_name: ta_redis_0
+    ports:
+      - "6390:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis-1:
+    image: redis:7-alpine
+    container_name: ta_redis_1
+    ports:
+      - "6391:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis-2:
+    image: redis:7-alpine
+    container_name: ta_redis_2
+    ports:
+      - "6392:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    container_name: ta_backend
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgres://${POSTGRES_USER:-typeahead}:${POSTGRES_PASSWORD:-typeahead}@postgres:5432/${POSTGRES_DB:-typeahead}
+      # Comma-separated list of cache nodes. The backend builds a consistent-
+      # hashing ring from exactly this list. Add/remove a node here and the
+      # ring re-balances with minimal key movement.
+      REDIS_NODES: "redis-0:6379,redis-1:6379,redis-2:6379"
+      CACHE_TTL_SECONDS: 60
+      BATCH_FLUSH_MS: 2000
+      BATCH_MAX_SIZE: 200
+      SUGGEST_LIMIT: 10
+      # Trending ranking weights (see trendingService.js)
+      RECENCY_WEIGHT: 1.0
+      POPULARITY_WEIGHT: 1.0
+      TRENDING_DECAY: 0.95
+      TRENDING_DECAY_MS: 60000
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-0:
+        condition: service_healthy
+      redis-1:
+        condition: service_healthy
+      redis-2:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    container_name: ta_frontend
+    environment:
+      # The Vite dev server proxies /api -> this URL (server-side, inside the
+      # docker network), so the browser only ever talks to the frontend origin.
+      BACKEND_URL: http://backend:8080
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

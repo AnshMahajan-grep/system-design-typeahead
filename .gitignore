@@ -1,0 +1,23 @@
+# ---- dependencies & build artifacts ----
+node_modules/
+dist/
+build/
+*.log
+
+# ---- OS / editor ----
+.DS_Store
+
+# ---- generated report artifacts (REPORT.md is the source of truth in-repo) ----
+REPORT.html
+REPORT.pdf
+
+# ---- personal / redundant docs (kept locally, not part of the submission repo) ----
+# The full report (REPORT.md / REPORT.pdf) consolidates these, so they are not
+# committed to keep the repo clean.
+VIVA_NOTES.md
+ARCHITECTURE.md
+API.md
+PERFORMANCE.md
+
+# We intentionally DO commit .env here because it only holds local demo
+# credentials (no real secrets). In a real project you would ignore it.
